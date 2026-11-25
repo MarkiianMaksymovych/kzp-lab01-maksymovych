@@ -2,6 +2,7 @@ package ua.lpnu.kzp;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -9,7 +10,7 @@ import java.util.Locale;
  * Консольна програма аналізу музичної фонотеки (варіант 13).
  *
  * <p>Формат запису: {@code artist;title;album;durationSec;genre}.
- * Порядок роботи: прочитати → перевірити → обчислити → вивести.
+ * Порядок роботи: прочитати → створити об'єкти {@link Track} → обчислити → вивести.
  */
 public final class Main {
 
@@ -18,21 +19,6 @@ public final class Main {
 
     /* Забороняє створення екземплярів службового класу. */
     private Main() {
-    }
-
-    /**
-     * Результат обробки: чотири показники та повідомлення про пропущені рядки.
-     *
-     * @param count кількість коректних записів
-     * @param totalSec сумарна тривалість у секундах
-     * @param avgSec середня тривалість треку в секундах
-     * @param longestSec тривалість найдовшого треку в секундах
-     * @param longestTitle виконавець і назва найдовшого треку
-     * @param errorCount кількість пропущених рядків
-     * @param errorText повідомлення про помилки, по одному на рядок
-     */
-    record Result(int count, long totalSec, double avgSec, int longestSec,
-                  String longestTitle, int errorCount, String errorText) {
     }
 
     /**
@@ -66,75 +52,53 @@ public final class Main {
     }
 
     /**
-     * Перевіряє кожен рядок і обчислює показники за коректними записами.
-     * Хибний рядок не зупиняє обробку: його номер і причина потрапляють у звіт.
+     * Перетворює рядки на об'єкти {@link Track} і обчислює показники.
+     * Помилка одного рядка не зупиняє обробку: її номер і причина потрапляють у звіт.
      *
      * @param lines рядки вхідного файла
      * @return показники та повідомлення про помилки
      */
-    static Result analyze(List<String> lines) {
+    static TrackSummary analyze(List<String> lines) {
+        List<Track> tracks = new ArrayList<>();
         StringBuilder errors = new StringBuilder();
         int errorCount = 0;
-        int count = 0;
-        long total = 0;
-        int longest = 0;
-        String longestTitle = "";
 
         for (int index = 0; index < lines.size(); index++) {
-            int number = index + 1;
-            String line = lines.get(index);
-            String problem = null;
-
-            if (line.isBlank()) {
-                problem = "порожній рядок";
-            } else {
-                // -1 зберігає порожнє останнє поле.
-                String[] fields = line.split(";", -1);
-                if (fields.length != 5) {
-                    problem = "очікується 5 полів, знайдено " + fields.length;
-                } else if (fields[0].isBlank() || fields[1].isBlank()
-                        || fields[2].isBlank() || fields[4].isBlank()) {
-                    problem = "порожнє обов'язкове поле";
-                } else {
-                    try {
-                        int seconds = Integer.parseInt(fields[3].trim());
-                        if (seconds <= 0) {
-                            problem = "тривалість має бути додатною";
-                        } else {
-                            // До статистики потрапляють лише записи, що пройшли всі перевірки.
-                            count++;
-                            total += seconds;
-                            if (seconds > longest) {
-                                longest = seconds;
-                                longestTitle = fields[0].trim() + " – " + fields[1].trim();
-                            }
-                        }
-                    } catch (NumberFormatException exception) {
-                        problem = "тривалість не є цілим числом";
-                    }
-                }
-            }
-
-            if (problem != null) {
+            try {
+                // Некоректний рядок не потрапляє до списку, тому не впливає на показники.
+                tracks.add(Track.fromCsv(lines.get(index)));
+            } catch (IllegalArgumentException exception) {
                 errorCount++;
-                errors.append("Рядок ").append(number).append(": ").append(problem)
-                    .append(System.lineSeparator());
+                errors.append("Рядок ").append(index + 1).append(": ")
+                    .append(exception.getMessage()).append(System.lineSeparator());
             }
         }
 
+        long total = 0;
+        Track longest = null;
+        for (Track track : tracks) {
+            total += track.getDurationSec();
+            if (longest == null || track.getDurationSec() > longest.getDurationSec()) {
+                longest = track;
+            }
+        }
+
+        int count = tracks.size();
         // Порожній набір обробляємо окремо, щоб не ділити на нуль.
         double average = count == 0 ? 0.0 : (double) total / count;
-        return new Result(count, total, average, longest, longestTitle,
+        int longestSec = longest == null ? 0 : longest.getDurationSec();
+        String longestTitle = longest == null ? "" : longest.displayName();
+        return new TrackSummary(count, total, average, longestSec, longestTitle,
             errorCount, errors.toString());
     }
 
     /**
      * Формує текст звіту з фіксованою кількістю знаків після крапки.
      *
-     * @param result результат обробки
+     * @param result підсумкові показники
      * @return готовий текст звіту
      */
-    static String format(Result result) {
+    static String format(TrackSummary result) {
         String longestInfo = result.count() == 0 ? "немає даних" : result.longestTitle();
         StringBuilder report = new StringBuilder();
         report.append(String.format(Locale.ROOT, "%-30s %10s%n", "Показник", "Значення"));
